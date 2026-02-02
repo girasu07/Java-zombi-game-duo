@@ -650,6 +650,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             p1Shooting = false;
             p2Shooting = false;
         }
+
+        if (code == KeyEvent.VK_SHIFT) {
+            p1Shift = false;
+            p2Shift = false;
+        }
     }
 
     @Override
