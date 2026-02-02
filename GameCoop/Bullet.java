@@ -1,12 +1,13 @@
 import java.awt.*;
+import java.io.Serializable;
 
-public class Bullet {
+public class Bullet implements Serializable {
     public double x, y;
     public double dx, dy;
     public int size = 6;
     public double speed = 10.0;
 
-    public Bullet(double startX, double startY, double angle) {
+    public Bullet (double startX, double startY, double angle){
         this.x = startX;
         this.y = startY;
         this.dx = Math.cos(angle) * speed;

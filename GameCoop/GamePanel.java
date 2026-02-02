@@ -51,6 +51,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     private boolean p2Shooting = false;
     private int p1shootTimer = 0;
     private int p2shootTimer = 0;
+   
     private static final int SHOOT_DELAY = 20; // 連射速度（小さいほど速い）
 
     private int PlayermoveTimer = 0;
@@ -64,6 +65,11 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     public static int totalKills = 0;
 
+    private boolean isGameOver = false;
+
+    int sendCounter = 0;
+    int inputSendCounter = 0;
+
     public GamePanel() {
         // プレイヤー初期化
         players.add(new Player(100, 100, Color.GREEN)); // Player 1
@@ -75,6 +81,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         this.setPreferredSize(new Dimension(WIDTH, HEIGHT));
         this.setBackground(Color.GRAY);
         this.setFocusable(true);
+        playSE("sound_zombeiVoice.wav");//起動音かつ、サウンドドライバー解放
 
         // リスナー登録
         this.addKeyListener(this);
@@ -144,7 +151,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         long lastTime = System.nanoTime();
         long currentTime;
     
-        while (isRunning) {
+        while (!isGameOver) {
             currentTime = System.nanoTime();
             delta += (currentTime - lastTime) / drawInterval;
             lastTime = currentTime;
@@ -169,7 +176,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                     }
                 } else {
                     // 通信がつながっていない場合は普通にゲームを進める（シングルプレイ状態）
-                    updateGame();
+                    //updateGame();
                 }
                 // 画面を描画
                 repaint();
@@ -184,10 +191,10 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         p2.checkRevival();
 
         // ★ここで全滅チェック！
-        if (p1.isDown && p2.isDown) {
-            isRunning = false;
-            JOptionPane.showMessageDialog(this, "GAME OVER - 二人ともダウンしました");
-            System.exit(0);
+        if (!isGameOver && p1.isDown && p2.isDown) {
+            //isRunning = false;
+            isGameOver = true;
+            playSE("sound_damage.wav");
         }
 
         // 2. 弾の更新
@@ -202,7 +209,7 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
         // 3. 敵のスポーン (約1秒ごと)
         spawnTimer++;
-        if (spawnTimer > 120) {
+        if (spawnTimer > 60) {
             spawnEnemy();
             spawnTimer = 0;
         }
@@ -234,37 +241,43 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             }
         }
         // 4. 敵の移動と当たり判定
-        Iterator<Enemy> eit = enemies.iterator();
-        while (eit.hasNext()) {
-            Enemy e = eit.next();
+        
+        synchronized(enemies) {
+            Iterator<Enemy> eit = enemies.iterator();
+            while (eit.hasNext()) {
+                Enemy e = eit.next();
 
-            // プレイヤーとの衝突
-            for (Player player : players) {
-                if (!player.isDown && e.getBounds().intersects(player.getBounds())) {
+                // プレイヤーとの衝突
+                for (Player player : players) {
+                    if (!player.isDown && e.getBounds().intersects(player.getBounds())) {
             
-            // ★変更: ゲーム終了ではなく、そのプレイヤーをダウンさせる
-                    player.isDown = true;
-                    System.out.println("Player DOWN!"); // デバッグ用
+                    //ゲーム終了ではなく、そのプレイヤーをダウンさせる
+                        player.isDown = true;
+                        System.out.println("Player DOWN!"); // デバッグ用
+                        playSE("sound_zombeiVoice.wav");
             
+                    }
                 }
-            }
             
-            // 弾との衝突
-            boolean hit = false;
-            Iterator<Bullet> bulletIt = bullets.iterator();
-            while (bulletIt.hasNext()) {
-                Bullet b = bulletIt.next();
-                if (e.getBounds().contains(b.x, b.y)) {
-                    bulletIt.remove(); // 弾消去
-                    hit = true;
-                    break;
+            
+                    // 弾との衝突
+                boolean hit = false;
+                Iterator<Bullet> bulletIt = bullets.iterator();
+                while (bulletIt.hasNext()) {
+                    Bullet b = bulletIt.next();
+                    if (e.getBounds().contains(b.x, b.y)) {
+                        bulletIt.remove(); // 弾消去
+                        hit = true;
+                        break;
+                    }
                 }
-            }
-            if (hit) {
-                eit.remove(); // 敵消去
-                GamePanel.totalKills++; // カウントアップ
+                if (hit) {
+                    eit.remove(); // 敵消去
+                    GamePanel.totalKills++; // カウントアップ
+                }
             }
         }
+
 
         // --- ★変更点3：タイマーを使った移動処理 ---
         
@@ -410,9 +423,21 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
 
     // --- ホスト用：状態を送る ---
     private void sendGameState() {
+        // カウンターを増やす
+        sendCounter++;
+        // 「3回に1回」だけ送る（それ以外は無視して帰る）
+        if (sendCounter < 3) { 
+            return; 
+        }
+        sendCounter = 0; // カウンターリセット
         try {
+            ArrayList<Bullet> safeBullets;
+            synchronized(bullets) {
+            // 送信用のコピー（分身）を作成
+            safeBullets = new ArrayList<>(this.bullets);
+            }
             // 現在の全情報をパック詰め
-            GameState state = new GameState(p1, p2, enemies, totalKills);
+            GameState state = new GameState(p1, p2, enemies, totalKills, safeBullets, this.isGameOver);
             out.writeObject(state);
             out.reset(); // ★重要：これを忘れると古いデータが送られ続けます！
         } catch (Exception e) {
@@ -436,6 +461,9 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                     this.p2Right = input.right;
                     this.p2Shooting = input.isShooting;
                     
+                    this.p2Shooting = input.isShooting; 
+                    this.p2.isReloading = input.isReloading;// リロードボタン
+                    
                 } catch (Exception e) {
                     e.printStackTrace();
                     isConnected = false; // エラーが出たら切断扱いにする
@@ -447,6 +475,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
     // --- クライアント用：キー入力を送る ---
     // --- クライアント用：自分の入力を送る（Threadにはしない！） ---
     private void sendClientInput() {
+        inputSendCounter++;
+        // ★ゲスト側も「3回に1回」に制限する！
+        if (inputSendCounter < 3) {
+            return;
+        }   
+        inputSendCounter = 0;
         try {
             ClientInput input = new ClientInput();
             input.up = p2Up;
@@ -454,7 +488,9 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
             input.left = p2Left;
             input.right = p2Right;
             input.isShooting = p2Shooting; // 変数名注意(p2Shootかp2Shiftか確認)
+            input.isReloading = p2.isReloading;
 
+           
             out.writeObject(input);
             out.reset(); // ★リセット必須
             
@@ -477,13 +513,28 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                     p1.y = state.p1y;
                     p1.direction = state.p1Dir;
                     p1.isDown = state.p1IsDown;
+                    p1.isReloading = state.p1IsReloading;
 
                     p2.x = state.p2x;
                     p2.y = state.p2y;
                     p2.direction = state.p2Dir;
                     p2.isDown = state.p2IsDown;
+                    p2.isReloading = state.p2IsReloading;
+
+                    if (isHost) {
+                        // ホストの場合：相手(P2)の弾数だけ受け取る
+                        p2.currentAmmo = state.p2currentAmmo;
+                    } else {
+                        // クライアントの場合：相手(P1)の弾数だけ受け取る
+                        // ★重要：自分の弾(state.p1currentAmmo)は無視して、自分の計算を信じる！
+                        p1.currentAmmo = state.p1currentAmmo; 
+
+                        // 「自分(P2)の弾数」もサーバーの計算結果に合わせる！
+                        p2.currentAmmo = state.p2currentAmmo;
+                    }
 
                     GamePanel.totalKills = state.totalKills;
+                    this.bullets = state.bullets;
                     
                     // --- 2. 敵の同期 ---
                     // エラー防止のため synchronized で守る
@@ -496,6 +547,8 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                             this.enemies.add(e);
                         }
                     }
+
+                    this.isGameOver = state.isGameOver; // 箱に詰める
                     
                     // (デバッグ用) ちゃんと届いてるか確認したいならコメント外す
                     // System.out.println("座標受信完了");
@@ -528,10 +581,12 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
         // g2.drawLine((int)player.getCenterX(), (int)player.getCenterY(), mouseX,
         // mouseY);
 
-        for (Bullet b : bullets)
-            b.draw(g2);
-        for (Enemy e : enemies)
-            e.draw(g2);
+        synchronized(enemies) { // ★ここにもロックが必要です！
+            for (Enemy e : enemies) {
+                if (e != null) e.draw(g2);
+            }for (Bullet b : bullets)
+                if (b != null) b.draw(g2);
+        }
 
         // paintComponentの中の super.paintComponent(g); の直下に書く
         g2.setColor(Color.LIGHT_GRAY);
@@ -572,24 +627,50 @@ public class GamePanel extends JPanel implements Runnable, KeyListener, MouseLis
                 g2.setColor(Color.WHITE);
                 g2.drawString("Ammo: " + p2.currentAmmo + " / " + p2.maxAmmo, 650, 50);
             }
-        }    
+        }
+        
+        if (isGameOver) {
+        drawGameOverScreen(g2);
+        }
     }
     
     // 音を鳴らす専用のメソッド
-    public void playSE(String fileName) {
-        try {
-            // 音声ファイルを読み込む
-            File soundFile = new File("sounds/" + fileName); // soundsフォルダを作る前提
-            AudioInputStream audioIn = AudioSystem.getAudioInputStream(soundFile);
-            
-            // クリップ（再生機）を用意して再生
-            Clip clip = AudioSystem.getClip();
-            clip.open(audioIn);
-            clip.start();
-            
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+    public static void playSE(String fileName) {
+        new Thread(() -> {
+            try {
+                File soundFile = new File("sounds/" + fileName);
+                AudioInputStream audioIn = AudioSystem.getAudioInputStream(soundFile);
+                Clip clip = AudioSystem.getClip();
+                clip.open(audioIn);
+                clip.start();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }).start(); // 
+    }
+
+    private void drawGameOverScreen(Graphics2D g2) {
+    
+        String text = "YOU ARE DEAD";
+    
+        // --- 1. フォントと色の設定 ---
+        // Font(フォント名, スタイル, サイズ)
+        // サイズを「80」とか「100」にすると「でかでか」になります！
+        Font gameOverFont = new Font("Stencil", Font.BOLD, 90); 
+        g2.setFont(gameOverFont);
+        g2.setColor(new Color(255, 0, 70)); // 赤い字！
+
+        // --- 2. 画面の真ん中に描くための計算（ちょっと難しいけどコピペでOK）---
+        // 「このフォントだと、この文字は幅何ピクセルになるか？」を計算してくれる便利なやつ
+        FontMetrics metrics = g2.getFontMetrics(gameOverFont);
+    
+        // 画面の幅の中央から、文字の幅の半分を左にずらす
+        int x = (WIDTH - metrics.stringWidth(text)) / 2;
+        // 画面の高さの中央（微調整込み）
+        int y = HEIGHT / 2;
+
+        // --- 3. 描画実行！ ---
+        g2.drawString(text, x, y);
     }
 
     @Override

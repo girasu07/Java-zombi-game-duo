@@ -62,8 +62,8 @@ public class Player {
     // 弾が減っていて、かつリロード中じゃなければ実行
         if (currentAmmo < maxAmmo && !isReloading) {
             isReloading = true;
-             // リロード完了
-            
+            GamePanel.playSE("sound_reloading.wav");
+             // リロード完了    
         }
         // System.out.println("Reloading..."); // デバッグ用
     }
