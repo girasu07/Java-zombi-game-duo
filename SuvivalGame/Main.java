@@ -2,7 +2,7 @@ import javax.swing.JFrame;
 
 public class Main {
     public static void main(String[] args) {
-        JFrame frame = new JFrame("Zombie Defense Game");
+        JFrame frame = new JFrame("Zombie Hanting");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         
         // ゲーム画面（パネル）を作成してフレームに乗せる
